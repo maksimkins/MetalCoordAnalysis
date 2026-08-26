@@ -13,6 +13,7 @@ from metalCoord.analysis.classify import find_classes_pdb, find_classes_cif, rea
 
 from metalCoord.analysis.metal import MetalPairStatsService
 from metalCoord.analysis.models import PdbStats
+from metalCoord.analysis.rings import RING_ANGLE_STATS
 from metalCoord.config import Config
 from metalCoord.debug import DebugRecorder, resolve_debug_paths
 from metalCoord.debug_domain import DomainReportBuilder, render_domain_markdown
@@ -837,11 +838,12 @@ def update_tetragons(
 ) -> None:
     """Update four-membered, alternating metal-ligand rings in a monomer CIF.
 
-    Metal-centred values come from the selected COD correspondence or ideal
-    coordination class already stored on ``monomer``. The two ligand-centred
-    values close the four-membered ring geometrically. Cycles containing atoms
-    outside the component are ignored because a monomer CIF may only reference
-    atoms from its own ``_chem_comp_atom`` category.
+    Exact ring statistics come from packaged reference data. When no exact
+    ring entry exists, metal-centred values come from selected COD
+    correspondence or ideal coordination class already stored on ``monomer``.
+    Ligand-centred values then close the ring geometrically. Cycles containing
+    atoms outside the component are ignored because a monomer CIF may only
+    reference atoms from its own ``_chem_comp_atom`` category.
     """
     for cycle in find_minimal_cycles(vertices):
         if len(cycle) != 4:
@@ -861,28 +863,85 @@ def update_tetragons(
         ):
             continue
 
-        metal1_angle = monomer.get_angle(metal1[0], ligand1, ligand2)
-        metal2_angle = monomer.get_angle(metal2[0], ligand1, ligand2)
-        if not metal1_angle:
-            Logger().warning(
-                f"Angle {ligand1[0]}-{metal1[0]}-{ligand2[0]} "
-                f"not found in {monomer.code}"
+        metal1_class = monomer.get_best_class(metal1[0])
+        metal2_class = monomer.get_best_class(metal2[0])
+        ring_stats = None
+        if metal1_class and metal2_class:
+            ring_stats = RING_ANGLE_STATS.find(
+                elements=(metal1[1], ligand1[1], metal2[1], ligand2[1]),
+                coordinations=(
+                    metal1_class.coordination,
+                    metal2_class.coordination,
+                ),
+                classes=(metal1_class.clazz, metal2_class.clazz),
             )
-        if not metal2_angle:
-            Logger().warning(
-                f"Angle {ligand1[0]}-{metal2[0]}-{ligand2[0]} "
-                f"not found in {monomer.code}"
-            )
-        if not metal1_angle or not metal2_angle:
-            continue
 
-        ligand_angle = (360 - metal1_angle.angle - metal2_angle.angle) / 2
-        targets = (
-            (ligand1, metal1, metal2, ligand_angle, 5.0),
-            (ligand2, metal1, metal2, ligand_angle, 5.0),
-            (metal1, ligand1, ligand2, metal1_angle.angle, metal1_angle.std),
-            (metal2, ligand1, ligand2, metal2_angle.angle, metal2_angle.std),
-        )
+        if ring_stats:
+            targets = (
+                (
+                    ligand1,
+                    metal1,
+                    metal2,
+                    ring_stats.ligand1.angle,
+                    ring_stats.ligand1.std,
+                ),
+                (
+                    ligand2,
+                    metal1,
+                    metal2,
+                    ring_stats.ligand2.angle,
+                    ring_stats.ligand2.std,
+                ),
+                (
+                    metal1,
+                    ligand1,
+                    ligand2,
+                    ring_stats.metal1.angle,
+                    ring_stats.metal1.std,
+                ),
+                (
+                    metal2,
+                    ligand1,
+                    ligand2,
+                    ring_stats.metal2.angle,
+                    ring_stats.metal2.std,
+                ),
+            )
+        else:
+            metal1_angle = monomer.get_angle(metal1[0], ligand1, ligand2)
+            metal2_angle = monomer.get_angle(metal2[0], ligand1, ligand2)
+            if not metal1_angle:
+                Logger().warning(
+                    f"Angle {ligand1[0]}-{metal1[0]}-{ligand2[0]} "
+                    f"not found in {monomer.code}"
+                )
+            if not metal2_angle:
+                Logger().warning(
+                    f"Angle {ligand1[0]}-{metal2[0]}-{ligand2[0]} "
+                    f"not found in {monomer.code}"
+                )
+            if not metal1_angle or not metal2_angle:
+                continue
+
+            ligand_angle = (360 - metal1_angle.angle - metal2_angle.angle) / 2
+            targets = (
+                (ligand1, metal1, metal2, ligand_angle, 5.0),
+                (ligand2, metal1, metal2, ligand_angle, 5.0),
+                (
+                    metal1,
+                    ligand1,
+                    ligand2,
+                    metal1_angle.angle,
+                    metal1_angle.std,
+                ),
+                (
+                    metal2,
+                    ligand1,
+                    ligand2,
+                    metal2_angle.angle,
+                    metal2_angle.std,
+                ),
+            )
         for center, neighbour1, neighbour2, value, std in targets:
             _upsert_angle(
                 angles,

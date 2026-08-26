@@ -31,7 +31,7 @@ def _component_cycle():
     ]
 
 
-def test_tetragon_angles_use_selected_class_statistics(monkeypatch):
+def test_tetragon_angles_use_packaged_ring_statistics(monkeypatch):
     cycle = _component_cycle()
     monkeypatch.setattr(analysis, "find_minimal_cycles", lambda _: [cycle])
 
@@ -42,6 +42,10 @@ def test_tetragon_angles_use_selected_class_statistics(monkeypatch):
     monomer = SimpleNamespace(
         code=("A", "FS2", "1"),
         get_angle=lambda metal, _ligand1, _ligand2: selected_angles[metal],
+        get_best_class=lambda _metal: SimpleNamespace(
+            coordination=4,
+            clazz="tetrahedral",
+        ),
     )
     angles = _empty_angles()
     angles[COMP_ID].append("FS2")
@@ -64,10 +68,44 @@ def test_tetragon_angles_use_selected_class_statistics(monkeypatch):
         )
     }
     assert len(angles[COMP_ID]) == 4
-    assert by_center["FE1"] == ("S2", "S1", "104.0", "3.0")
-    assert by_center["FE2"] == ("S1", "S2", "106.0", "4.0")
-    assert by_center["S1"] == ("FE1", "FE2", "75.0", "5.0")
-    assert by_center["S2"] == ("FE1", "FE2", "75.0", "5.0")
+    assert by_center["FE1"] == ("S2", "S1", "104.89", "4.13")
+    assert by_center["FE2"] == ("S1", "S2", "104.89", "4.13")
+    assert by_center["S1"] == ("FE1", "FE2", "74.47", "4.05")
+    assert by_center["S2"] == ("FE1", "FE2", "74.47", "4.05")
+
+
+def test_tetragon_without_packaged_stats_uses_selected_class(monkeypatch):
+    cycle = _component_cycle()
+    monkeypatch.setattr(analysis, "find_minimal_cycles", lambda _: [cycle])
+
+    selected_angles = {
+        "FE1": SimpleNamespace(angle=104.0, std=3.0),
+        "FE2": SimpleNamespace(angle=106.0, std=4.0),
+    }
+    monomer = SimpleNamespace(
+        code=("A", "FS2", "1"),
+        get_angle=lambda metal, _ligand1, _ligand2: selected_angles[metal],
+        get_best_class=lambda _metal: SimpleNamespace(
+            coordination=5,
+            clazz="trigonal-bipyramid",
+        ),
+    )
+    angles = _empty_angles()
+
+    analysis.update_tetragons("FS2", angles, monomer, cycle)
+
+    by_center = {
+        center: (value, std)
+        for center, value, std in zip(
+            angles[ATOM_ID_2],
+            angles[VALUE_ANGLE],
+            angles[VALUE_ANGLE_ESD],
+        )
+    }
+    assert by_center["FE1"] == ("104.0", "3.0")
+    assert by_center["FE2"] == ("106.0", "4.0")
+    assert by_center["S1"] == ("75.0", "5.0")
+    assert by_center["S2"] == ("75.0", "5.0")
 
 
 def test_tetragon_with_external_atom_is_not_written(monkeypatch):
@@ -97,6 +135,7 @@ def test_tetragon_without_class_angles_is_not_written(monkeypatch):
     monomer = SimpleNamespace(
         code=("A", "FS2", "1"),
         get_angle=lambda *_args: None,
+        get_best_class=lambda _metal: None,
     )
     angles = _empty_angles()
 
